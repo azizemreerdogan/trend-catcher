@@ -4,6 +4,11 @@ from pprint import pprint
 import json
 import time
 
+from services.engagement_provider import EngagementProvider
+from services.growth_engine_provider import GrowthEngineProvider
+from services.metadata_provider import MetadataProvider
+from agents.fusion_agent import FusionAgent
+
 # ------------------------------------------------
 # FAZ 1 YARDIMCI FONKSIYONLARI (Servis Hazırlığı)
 # ------------------------------------------------
@@ -142,13 +147,44 @@ def run_pipeline(video_id: str):
     print("\n========== Parallel Pipeline (Stage Triggered) ==========")
     vision_result = None
     transcript_result = None
+    engagement_data = None
+    growth_data = None
+    video_metadata = None
     durations_ms = {}
     total_start = time.perf_counter()
 
     with ThreadPoolExecutor(max_workers=thread_workers) as executor:
+        # Start fetching additional metadata concurrently
+        def fetch_engagement():
+            return EngagementProvider(os.path.join(project_root, "catcher-data")).get_engagement_data(video_id)
+        def fetch_growth():
+            return GrowthEngineProvider(os.path.join(project_root, "catcher-data")).get_growth_engine_results(video_id)
+        def fetch_metadata():
+            return MetadataProvider(os.path.join(project_root, "catcher-data")).get_metadata(video_id)
+
+        future_eng = executor.submit(fetch_engagement)
+        future_gro = executor.submit(fetch_growth)
+        future_meta = executor.submit(fetch_metadata)
+
+        # Run main vision/transcript stage-triggered pipeline
         vision_result, transcript_result = _run_stage_pipeline(
             executor, video_path, output_dir, video_data_dir, video_id, durations_ms
         )
+
+        try:
+            engagement_data = future_eng.result()
+        except Exception as e:
+            print(f"Error fetching engagement data: {e}")
+            
+        try:
+            growth_data = future_gro.result()
+        except Exception as e:
+            print(f"Error fetching growth engine data: {e}")
+            
+        try:
+            video_metadata = future_meta.result()
+        except Exception as e:
+            print(f"Error fetching video metadata: {e}")
 
     durations_ms["total_ms"] = int((time.perf_counter() - total_start) * 1000)
 
@@ -171,7 +207,36 @@ def run_pipeline(video_id: str):
         print(f"Transcript → {path}")
         pprint(transcript_result, indent=2)
 
+    # =============================================
+    # FAZ 3: Fusion Agent (Sentez)
+    # =============================================
+    print("\n========== FAZ 3: Running Fusion Agent ==========")
+    fusion_start = time.perf_counter()
+    try:
+        fusion_agent = FusionAgent(data_root=os.path.join(project_root, "catcher-data"))
+        fusion_result = fusion_agent.fuse(
+            video_analysis=vision_result,
+            transcript_analysis=transcript_result,
+            engagement_metrics=engagement_data,
+            growth_engine_results=growth_data,
+            video_metadata=video_metadata
+        )
+        durations_ms["agent_fusion_ms"] = int((time.perf_counter() - fusion_start) * 1000)
+        print("\n[FUSION AGENT] Completed successfully.")
+        
+        if fusion_result:
+            path = os.path.join(video_data_dir, "fusion_summary.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(fusion_result, f, indent=4, ensure_ascii=False)
+            print(f"Fusion → {path}")
+            pprint(fusion_result, indent=2)
+            
+    except Exception as e:
+        durations_ms["agent_fusion_ms"] = int((time.perf_counter() - fusion_start) * 1000)
+        print(f"\n[FUSION AGENT] Error: {e}")
+
     print("\n========== Timing ==========")
     pprint(durations_ms, indent=2)
 
     print("\n✅ Pipeline completed.")
+
