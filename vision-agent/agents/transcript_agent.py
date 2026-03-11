@@ -25,8 +25,12 @@ def analyze_audio(audio_path: str):
     myfile = client.files.upload(file=audio_path)
     
     prompt = (
-        "Bu ses dosyasını (kısa form video sesi) dinle ve harfi harfine metne çevir (transcript)."
-        "Ayrıca konuşulan dili (language), anahtar kelimeleri (keywords) ve genel duygu tonunu (tone - örn: Enerjik, Sakin, Eğlenceli) belirle."
+    "Bu ses dosyasını (kısa form video sesi) dinle ve harfi harfine metne çevir. "
+    "ÖNEMLİ KURAL: Eğer seste bir insanın doğal konuşması yoksa, yani sadece bir şarkı "
+    "veya arka plan müziği çalıyorsa, şarkı sözlerini KESİNLİKLE metne çevirme! "
+    "Tüm şarkı sözlerini yazmak yerine 'transcript' alanına sadece '[Arka Plan Müziği]' veya '[Şarkı]' yaz. "
+    "Ayrıca konuşulan dili (language) (eğer sadece müzikse boş bırak), anahtar kelimeleri (keywords) ve "
+    "genel duygu tonunu (tone - örn: Eğlenceli Müzik, Nostaljik, Hareketli) belirle."
     )
     
     print("Calling Gemini 2.5 Flash API for audio analysis...")
