@@ -9,6 +9,8 @@ from pprint import pprint
 import json
 from services.engagement_provider import EngagementProvider
 from services.growth_engine_provider import GrowthEngineProvider
+from services.metadata_provider import MetadataProvider
+from agents.fusion_agent import FusionAgent
 
 # ------------------------------------------------
 # FAZ 1 YARDIMCI FONKSIYONLARI (Servis Hazırlığı)
@@ -85,15 +87,18 @@ def run_pipeline(video_id: str):
         except Exception as e:
             print(f"Error in audio preparation: {e}")
             
-    print("\n========== FAZ 1.5: Getting Engagement Data + Growth Data ==========")
+    print("\n========== FAZ 1.5: Getting Context & Engagement Data ==========")
     engagement_data = None
     growth_data = None
+    video_metadata = None
+    
     try:
         provider = EngagementProvider(os.path.join(project_root, "catcher-data"))
         engagement_data = provider.get_engagement_data(video_id)
         print(f"Engagement Data: {engagement_data}")
     except Exception as e:
         print(f"Error fetching engagement data: {e}")
+        
     try: 
         growth_provider = GrowthEngineProvider(os.path.join(project_root, "catcher-data"))
         growth_data = growth_provider.get_growth_engine_results(video_id)
@@ -101,7 +106,12 @@ def run_pipeline(video_id: str):
     except Exception as e:
         print(f"Error fetching growth engine data: {e}")
         
-    
+    try:
+        metadata_provider = MetadataProvider(os.path.join(project_root, "catcher-data"))
+        video_metadata = metadata_provider.get_metadata(video_id)
+        print(f"Video Metadata: {video_metadata}")
+    except Exception as e:
+        print(f"Error fetching video metadata: {e}")
 
     # =============================================
     # FAZ 2: Agentlar Paralel (Vision || Transcript)
@@ -148,5 +158,30 @@ def run_pipeline(video_id: str):
             json.dump(transcript_result, f, indent=4, ensure_ascii=False)
         print(f"Transcript → {path}")
         pprint(transcript_result, indent=2)
+
+    # =============================================
+    # FAZ 3: Fusion Agent (Sentez)
+    # =============================================
+    print("\n========== FAZ 3: Running Fusion Agent ==========")
+    try:
+        fusion_agent = FusionAgent(data_root=os.path.join(project_root, "catcher-data"))
+        fusion_result = fusion_agent.fuse(
+            video_analysis=vision_result,
+            transcript_analysis=transcript_result,
+            engagement_metrics=engagement_data,
+            growth_engine_results=growth_data,
+            video_metadata=video_metadata
+        )
+        print("\n[FUSION AGENT] Completed successfully.")
+        
+        if fusion_result:
+            path = os.path.join(video_data_dir, "fusion_summary.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(fusion_result, f, indent=4, ensure_ascii=False)
+            print(f"Fusion → {path}")
+            pprint(fusion_result, indent=2)
+            
+    except Exception as e:
+        print(f"\n[FUSION AGENT] Error: {e}")
     
     print("\n✅ Pipeline completed.")
