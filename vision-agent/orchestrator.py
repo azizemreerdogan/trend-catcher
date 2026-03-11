@@ -1,22 +1,17 @@
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from services.segment_detector import detect_segments
-from services.strip_creator import create_vertical_strip
-from services.audio_extractor import extract_audio
-from agents.vision_agent import analyze_video_strip
-from agents.transcript_agent import analyze_audio
 from pprint import pprint
 import json
-from services.engagement_provider import EngagementProvider
-from services.growth_engine_provider import GrowthEngineProvider
-from services.metadata_provider import MetadataProvider
-from agents.fusion_agent import FusionAgent
+import time
 
 # ------------------------------------------------
 # FAZ 1 YARDIMCI FONKSIYONLARI (Servis Hazırlığı)
 # ------------------------------------------------
 def _prepare_vision(video_path, output_dir, video_data_dir, video_id):
     """Frame extraction + Strip creation (sıralı, kendi içinde)."""
+    from services.segment_detector import detect_segments
+    from services.strip_creator import create_vertical_strip
+
     print("\n--- [Thread-Vision] Extracting Frames ---")
     saved_frames = detect_segments(video_path, output_dir)
     print(f"[Thread-Vision] Extracted {len(saved_frames)} key frames.")
@@ -31,11 +26,82 @@ def _prepare_vision(video_path, output_dir, video_data_dir, video_id):
 
 def _prepare_audio(video_path, video_data_dir):
     """FFmpeg ile ses cikarimi."""
+    from services.audio_extractor import extract_audio
+
     print("\n--- [Thread-Audio] Extracting Audio ---")
     audio_path = os.path.join(video_data_dir, "audio.wav")
     extract_audio(video_path, audio_path)
     print(f"[Thread-Audio] Audio extracted to: {audio_path}")
     return audio_path
+
+def _int_env(name: str, default: int) -> int:
+    """Read positive integer env var; fallback to default."""
+    value = os.getenv(name)
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else default
+    except ValueError:
+        return default
+
+def _run_stage_pipeline(executor, video_path, output_dir, video_data_dir, video_id, durations_ms):
+    """Stage-triggered flow: start each agent as soon as its prep is ready."""
+    strip_path = None
+    audio_path = None
+    vision_result = None
+    transcript_result = None
+
+    pending = {}
+    start_times = {}
+
+    from agents.vision_agent import analyze_video_strip
+    from agents.transcript_agent import analyze_audio
+
+    vision_prep = executor.submit(_prepare_vision, video_path, output_dir, video_data_dir, video_id)
+    audio_prep = executor.submit(_prepare_audio, video_path, video_data_dir)
+    pending[vision_prep] = ("prep", "vision")
+    pending[audio_prep] = ("prep", "transcript")
+    start_times[vision_prep] = time.perf_counter()
+    start_times[audio_prep] = time.perf_counter()
+
+    while pending:
+        completed = next(as_completed(list(pending)))
+        stage, branch = pending.pop(completed)
+        elapsed_ms = int((time.perf_counter() - start_times.pop(completed)) * 1000)
+
+        try:
+            result = completed.result()
+        except Exception as e:
+            print(f"\n[{stage.upper()}::{branch.upper()}] Error: {e}")
+            continue
+
+        if stage == "prep":
+            if branch == "vision":
+                strip_path = result
+                durations_ms["prep_vision_ms"] = elapsed_ms
+                print(f"[PREP::VISION] Completed in {elapsed_ms} ms. Vision agent starting...")
+                future = executor.submit(analyze_video_strip, strip_path)
+                pending[future] = ("agent", "vision")
+                start_times[future] = time.perf_counter()
+            else:
+                audio_path = result
+                durations_ms["prep_audio_ms"] = elapsed_ms
+                print(f"[PREP::TRANSCRIPT] Completed in {elapsed_ms} ms. Transcript agent starting...")
+                future = executor.submit(analyze_audio, audio_path)
+                pending[future] = ("agent", "transcript")
+                start_times[future] = time.perf_counter()
+            continue
+
+        if branch == "vision":
+            vision_result = result
+            durations_ms["agent_vision_ms"] = elapsed_ms
+        else:
+            transcript_result = result
+            durations_ms["agent_transcript_ms"] = elapsed_ms
+        print(f"[AGENT::{branch.upper()}] Completed in {elapsed_ms} ms.")
+
+    return vision_result, transcript_result
 
 # ------------------------------------------------
 # ANA PIPELINE
@@ -66,79 +132,25 @@ def run_pipeline(video_id: str):
         print(f"Error: No valid video file found in {video_data_dir}")
         return
 
-    # =============================================
-    # FAZ 1: Servisler Paralel (Frame+Strip || Audio)
-    # =============================================
-    print("\n========== FAZ 1: Preparing Data (Parallel) ==========")
-    strip_path = None
-    audio_path = None
-    
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        vision_prep = executor.submit(_prepare_vision, video_path, output_dir, video_data_dir, video_id)
-        audio_prep  = executor.submit(_prepare_audio, video_path, video_data_dir)
-        
-        try:
-            strip_path = vision_prep.result()
-        except Exception as e:
-            print(f"Error in vision preparation: {e}")
-            
-        try:
-            audio_path = audio_prep.result()
-        except Exception as e:
-            print(f"Error in audio preparation: {e}")
-            
-    print("\n========== FAZ 1.5: Getting Context & Engagement Data ==========")
-    engagement_data = None
-    growth_data = None
-    video_metadata = None
-    
-    try:
-        provider = EngagementProvider(os.path.join(project_root, "catcher-data"))
-        engagement_data = provider.get_engagement_data(video_id)
-        print(f"Engagement Data: {engagement_data}")
-    except Exception as e:
-        print(f"Error fetching engagement data: {e}")
-        
-    try: 
-        growth_provider = GrowthEngineProvider(os.path.join(project_root, "catcher-data"))
-        growth_data = growth_provider.get_growth_engine_results(video_id)
-        print(f"Growth Engine Data: {growth_data}")
-    except Exception as e:
-        print(f"Error fetching growth engine data: {e}")
-        
-    try:
-        metadata_provider = MetadataProvider(os.path.join(project_root, "catcher-data"))
-        video_metadata = metadata_provider.get_metadata(video_id)
-        print(f"Video Metadata: {video_metadata}")
-    except Exception as e:
-        print(f"Error fetching video metadata: {e}")
+    default_thread_workers = min(8, (os.cpu_count() or 4) * 2)
+    thread_workers = _int_env("THREAD_WORKERS", default_thread_workers)
+    print(f"\n[Config] THREAD_WORKERS={thread_workers}")
 
     # =============================================
-    # FAZ 2: Agentlar Paralel (Vision || Transcript)
+    # PIPELINE: Hazirlanan branch aninda ilgili agent'a gider
     # =============================================
-    print("\n========== FAZ 2: Running Agents (Parallel) ==========")
+    print("\n========== Parallel Pipeline (Stage Triggered) ==========")
     vision_result = None
     transcript_result = None
-    
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {}
-        
-        if strip_path:
-            futures[executor.submit(analyze_video_strip, strip_path)] = "vision"
-        if audio_path:
-            futures[executor.submit(analyze_audio, audio_path)] = "transcript"
-        
-        for future in as_completed(futures):
-            agent_name = futures[future]
-            try:
-                result = future.result()
-                if agent_name == "vision":
-                    vision_result = result
-                else:
-                    transcript_result = result
-                print(f"\n[{agent_name.upper()} AGENT] Completed successfully.")
-            except Exception as e:
-                print(f"\n[{agent_name.upper()} AGENT] Error: {e}")
+    durations_ms = {}
+    total_start = time.perf_counter()
+
+    with ThreadPoolExecutor(max_workers=thread_workers) as executor:
+        vision_result, transcript_result = _run_stage_pipeline(
+            executor, video_path, output_dir, video_data_dir, video_id, durations_ms
+        )
+
+    durations_ms["total_ms"] = int((time.perf_counter() - total_start) * 1000)
 
     # =============================================
     # SONUCLARI KAYDET
@@ -159,29 +171,7 @@ def run_pipeline(video_id: str):
         print(f"Transcript → {path}")
         pprint(transcript_result, indent=2)
 
-    # =============================================
-    # FAZ 3: Fusion Agent (Sentez)
-    # =============================================
-    print("\n========== FAZ 3: Running Fusion Agent ==========")
-    try:
-        fusion_agent = FusionAgent(data_root=os.path.join(project_root, "catcher-data"))
-        fusion_result = fusion_agent.fuse(
-            video_analysis=vision_result,
-            transcript_analysis=transcript_result,
-            engagement_metrics=engagement_data,
-            growth_engine_results=growth_data,
-            video_metadata=video_metadata
-        )
-        print("\n[FUSION AGENT] Completed successfully.")
-        
-        if fusion_result:
-            path = os.path.join(video_data_dir, "fusion_summary.json")
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(fusion_result, f, indent=4, ensure_ascii=False)
-            print(f"Fusion → {path}")
-            pprint(fusion_result, indent=2)
-            
-    except Exception as e:
-        print(f"\n[FUSION AGENT] Error: {e}")
-    
+    print("\n========== Timing ==========")
+    pprint(durations_ms, indent=2)
+
     print("\n✅ Pipeline completed.")
