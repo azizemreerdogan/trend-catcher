@@ -14,3 +14,19 @@ class TranscriptAnalysis(BaseModel):
     language: str = Field(description="Konuşulan ana dil (Örn: Türkçe, İngilizce)")
     keywords: list[str] = Field(description="Konuşmadaki anahtar kelimeler")
     tone: str = Field(description="Konuşmanın genel tonu (Örn: Ciddi, eğlenceli, agresif)")
+    is_music_only: str = Field(description="Seste doğal bir konuşma yoksa, SADECE müzik/şarkı çalıyorsa True olmalı.")
+
+class EngagementMetrics(BaseModel):
+    views: int = Field(description="Videonun izlenme sayısı")
+    likes: int = Field(description="Videonun beğeni sayısı")
+    comment_count: int = Field(description="Videonun yorum sayısı")
+    share_count: int = Field(description="Videonun paylaşım sayısı")
+    save_count: int = Field(description="Videonun kaydetme sayısı")
+    engagement_rate: float = Field(description="Videonun etkileşim oranı (Beğeni + Yorum + Paylaşım + Kaydetme) / İzlenme sayısı")
+
+class GrowthEngineResults(BaseModel):
+    delta_views: int = Field(description="Videonun izlenme sayısı")
+    velocity: int = Field(description="Videonun etkileşim artış hızı")
+    normalized_growth: float = Field(description="Videonun normalize edilmiş büyüme skoru")
+    final_growth_score: int = Field(description="Videonun genel büyüme skoru")
+    

@@ -7,6 +7,8 @@ from agents.vision_agent import analyze_video_strip
 from agents.transcript_agent import analyze_audio
 from pprint import pprint
 import json
+from services.engagement_provider import EngagementProvider
+from services.growth_engine_provider import GrowthEngineProvider
 
 # ------------------------------------------------
 # FAZ 1 YARDIMCI FONKSIYONLARI (Servis Hazırlığı)
@@ -82,6 +84,24 @@ def run_pipeline(video_id: str):
             audio_path = audio_prep.result()
         except Exception as e:
             print(f"Error in audio preparation: {e}")
+            
+    print("\n========== FAZ 1.5: Getting Engagement Data + Growth Data ==========")
+    engagement_data = None
+    growth_data = None
+    try:
+        provider = EngagementProvider(os.path.join(project_root, "catcher-data"))
+        engagement_data = provider.get_engagement_data(video_id)
+        print(f"Engagement Data: {engagement_data}")
+    except Exception as e:
+        print(f"Error fetching engagement data: {e}")
+    try: 
+        growth_provider = GrowthEngineProvider(os.path.join(project_root, "catcher-data"))
+        growth_data = growth_provider.get_growth_engine_results(video_id)
+        print(f"Growth Engine Data: {growth_data}")
+    except Exception as e:
+        print(f"Error fetching growth engine data: {e}")
+        
+    
 
     # =============================================
     # FAZ 2: Agentlar Paralel (Vision || Transcript)
