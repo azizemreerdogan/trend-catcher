@@ -9,6 +9,22 @@ from services.growth_engine_provider import GrowthEngineProvider
 from services.metadata_provider import MetadataProvider
 from agents.fusion_agent import FusionAgent
 
+
+def _write_stage_error(video_data_dir, file_name, stage, message):
+    path = os.path.join(video_data_dir, file_name)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "status": "error",
+                "stage": stage,
+                "message": message,
+            },
+            f,
+            indent=4,
+            ensure_ascii=False,
+        )
+    print(f"{stage.title()} error -> {path}")
+
 # ------------------------------------------------
 # FAZ 1 YARDIMCI FONKSIYONLARI (Servis Hazırlığı)
 # ------------------------------------------------
@@ -56,6 +72,7 @@ def _run_stage_pipeline(executor, video_path, output_dir, video_data_dir, video_
     audio_path = None
     vision_result = None
     transcript_result = None
+    stage_errors = {"vision": None, "transcript": None}
 
     pending = {}
     start_times = {}
@@ -79,6 +96,7 @@ def _run_stage_pipeline(executor, video_path, output_dir, video_data_dir, video_
             result = completed.result()
         except Exception as e:
             print(f"\n[{stage.upper()}::{branch.upper()}] Error: {e}")
+            stage_errors[branch] = str(e)
             continue
 
         if stage == "prep":
@@ -106,7 +124,7 @@ def _run_stage_pipeline(executor, video_path, output_dir, video_data_dir, video_
             durations_ms["agent_transcript_ms"] = elapsed_ms
         print(f"[AGENT::{branch.upper()}] Completed in {elapsed_ms} ms.")
 
-    return vision_result, transcript_result
+    return vision_result, transcript_result, stage_errors
 
 # ------------------------------------------------
 # ANA PIPELINE
@@ -167,7 +185,7 @@ def run_pipeline(video_id: str):
         future_meta = executor.submit(fetch_metadata)
 
         # Run main vision/transcript stage-triggered pipeline
-        vision_result, transcript_result = _run_stage_pipeline(
+        vision_result, transcript_result, stage_errors = _run_stage_pipeline(
             executor, video_path, output_dir, video_data_dir, video_id, durations_ms
         )
 
@@ -206,10 +224,33 @@ def run_pipeline(video_id: str):
             json.dump(transcript_result, f, indent=4, ensure_ascii=False)
         print(f"Transcript → {path}")
         pprint(transcript_result, indent=2)
+    else:
+        _write_stage_error(
+            video_data_dir,
+            "transcript.json",
+            "transcript",
+            stage_errors.get("transcript") or "Transcript stage did not produce a result. Check ffmpeg and Gemini logs.",
+        )
+
+    if not vision_result:
+        _write_stage_error(
+            video_data_dir,
+            "vision_summary.json",
+            "vision",
+            stage_errors.get("vision") or "Vision stage did not produce a result. Check strip generation and Gemini logs.",
+        )
 
     # =============================================
     # FAZ 3: Fusion Agent (Sentez)
     # =============================================
+    if not vision_result or not transcript_result:
+        print("\n========== FAZ 3: Skipping Fusion Agent ==========")
+        print("Fusion skipped because vision or transcript stage did not complete successfully.")
+        print("\n========== Timing ==========")
+        pprint(durations_ms, indent=2)
+        print("\n✅ Pipeline completed with partial results.")
+        return
+
     print("\n========== FAZ 3: Running Fusion Agent ==========")
     fusion_start = time.perf_counter()
     try:
@@ -239,4 +280,3 @@ def run_pipeline(video_id: str):
     pprint(durations_ms, indent=2)
 
     print("\n✅ Pipeline completed.")
-

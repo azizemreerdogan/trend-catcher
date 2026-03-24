@@ -122,17 +122,56 @@ copy path\to\video.mp4 catcher-data\my_video\
 
 # Pipeline'ı çalıştır (klasör adını ver)
 cd vision-agent
-python main.py my_video
+python3 main.py my_video
 ```
 
 ## 🧪 Tests
 
 ```bash
 cd vision-agent
-python -m pytest tests/ -v
+python3 -m pytest tests/ -v
 ```
 
 Testler Gemini API'ını **mock'layarak** çalışır — gerçek API çağrısı yapmaz, para harcamaz.
+
+Instagram scraper testleri:
+
+```bash
+./.venv/bin/python -m pytest instagram-scraper/tests -v
+```
+
+## 📦 Instagram Scraper v1
+
+Instagram uzerinde bulunan reel/video metadata bilgisini toplayip `instagram-scraper/data/videos.json` dosyasina yazar.
+
+Ilk calistirma:
+
+```bash
+cd instagram-scraper
+python3 scripts/save_instagram_state.py
+```
+
+Bu script Instagram login ekranini acar. Girisi manuel yapin, sonra terminale donup Enter tusuna basin. Playwright auth state dosyasi `instagram-scraper/auth/state.json` olarak kaydedilir.
+
+Scraper calistirma:
+
+```bash
+cd instagram-scraper
+python3 main.py --max-links 20
+```
+
+Akis:
+- Browser context `auth/state.json` ile acilir
+- Baslangic sayfasi `https://www.instagram.com/reels/`
+- Scroll ile reel linkleri toplanir
+- Linkler normalize edilip benzersiz hale getirilir
+- Her reel icin metadata cikarilir
+- Veriler `video_id` bazli dedup ile JSON dosyasina yazilir
+
+Hata durumlari:
+- `auth/state.json` yoksa scraper anlamli hata verir ve once `python3 scripts/save_instagram_state.py` calistirmanizi ister
+- Playwright kurulu degilse kurulum komutunu soyler
+- Sayfadan metadata parse edilemezse ilgili reel `failed_items` olarak sayilir
 
 ## 💰 Cost Analysis
 
