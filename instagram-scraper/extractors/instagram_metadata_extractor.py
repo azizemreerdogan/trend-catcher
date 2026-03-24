@@ -606,7 +606,7 @@ def _select_preferred_video_version(video_versions: list[dict]) -> dict | None:
         candidate_type = _coerce_int(candidate.get("type")) or 0
         return (area, bitrate, candidate_type)
 
-    return min(valid_candidates, key=_score)
+    return max(valid_candidates, key=_score)
 
 
 def _coerce_int(value) -> int | None:

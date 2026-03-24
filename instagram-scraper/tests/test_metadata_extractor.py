@@ -162,7 +162,7 @@ def test_extract_metadata_prefers_smallest_video_variant_for_download():
     payload = extract_metadata_from_html(html, "https://www.instagram.com/reels/ABC123/")
 
     assert payload is not None
-    assert payload["video_download_url"] == "https://cdn.example.com/video-small.mp4"
+    assert payload["video_download_url"] == "https://cdn.example.com/video-large.mp4"
 
 
 def test_extract_view_count_from_internal_api_payload():

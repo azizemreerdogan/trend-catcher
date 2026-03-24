@@ -20,14 +20,18 @@ class InstagramVideoDownloader:
         self._download_dir = Path(download_dir)
         self._ssl_context = self._build_ssl_context()
 
-    def download(self, metadata: VideoMetadata) -> DownloadResult:
+    def download(self, metadata: VideoMetadata, target_path: str | Path | None = None) -> DownloadResult:
         if not metadata.video_download_url:
             return DownloadResult(downloaded=False, skipped=True)
 
-        self._download_dir.mkdir(parents=True, exist_ok=True)
-        target_path = self._download_dir / f"{metadata.video_id}.mp4"
-        if target_path.exists():
-            return DownloadResult(downloaded=False, skipped=True, file_path=target_path)
+        if target_path is None:
+            self._download_dir.mkdir(parents=True, exist_ok=True)
+            resolved_target_path = self._download_dir / f"{metadata.video_id}.mp4"
+        else:
+            resolved_target_path = Path(target_path)
+            resolved_target_path.parent.mkdir(parents=True, exist_ok=True)
+        if resolved_target_path.exists():
+            return DownloadResult(downloaded=False, skipped=True, file_path=resolved_target_path)
 
         request = Request(
             str(metadata.video_download_url),
@@ -41,9 +45,9 @@ class InstagramVideoDownloader:
         )
 
         with urlopen(request, timeout=60, context=self._ssl_context) as response:
-            target_path.write_bytes(response.read())
+            resolved_target_path.write_bytes(response.read())
 
-        return DownloadResult(downloaded=True, skipped=False, file_path=target_path)
+        return DownloadResult(downloaded=True, skipped=False, file_path=resolved_target_path)
 
     def _build_ssl_context(self) -> ssl.SSLContext:
         try:

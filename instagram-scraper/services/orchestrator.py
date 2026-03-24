@@ -7,7 +7,9 @@ from extractors.instagram_metadata_extractor import InstagramMetadataExtractor
 from models.video_metadata import ScrapeResult, VideoMetadata
 from navigators.instagram_navigator import InstagramNavigator
 from services.browser_session import BrowserSession
+from services.catcher_data_exporter import CatcherDataExporter
 from services.video_downloader import InstagramVideoDownloader
+from services.vision_agent_runner import VisionAgentRunner
 from storage.json_storage import JsonVideoStorage
 
 
@@ -18,6 +20,8 @@ class InstagramScrapeOrchestrator:
         extractor: InstagramMetadataExtractor,
         storage: JsonVideoStorage,
         downloader: InstagramVideoDownloader | None = None,
+        catcher_exporter: CatcherDataExporter | None = None,
+        vision_agent_runner: VisionAgentRunner | None = None,
         browser_session_factory=BrowserSession,
         storage_state_path: str | Path | None = None,
     ) -> None:
@@ -25,6 +29,8 @@ class InstagramScrapeOrchestrator:
         self._extractor = extractor
         self._storage = storage
         self._downloader = downloader
+        self._catcher_exporter = catcher_exporter
+        self._vision_agent_runner = vision_agent_runner
         self._browser_session_factory = browser_session_factory
         self._storage_state_path = Path(storage_state_path) if storage_state_path else None
 
@@ -38,6 +44,7 @@ class InstagramScrapeOrchestrator:
         pause_before_extract: bool = False,
         step_mode: bool = False,
         download_videos: bool = False,
+        run_vision_agent: bool = False,
     ) -> ScrapeResult:
         if self._storage_state_path is None:
             raise ValueError("storage_state_path is required for Instagram scraping.")
@@ -94,14 +101,50 @@ class InstagramScrapeOrchestrator:
                             " path=instagram-scraper/data/videos.json"
                         )
 
+                        bundle = None
+                        if self._catcher_exporter is not None:
+                            bundle = self._catcher_exporter.prepare_bundle(metadata)
+                            print(f"Catcher bundle hazirlandi: {bundle.video_dir}")
+
                         if download_videos and self._downloader is not None:
                             try:
-                                download_result = self._downloader.download(metadata)
+                                target_path = bundle.video_file_path if bundle is not None else None
+                                download_result = self._downloader.download(metadata, target_path=target_path)
                                 downloaded_items += int(download_result.downloaded)
                                 skipped_downloads += int(download_result.skipped)
                                 if download_result.file_path:
                                     action = "Downloaded" if download_result.downloaded else "Skipped download"
                                     print(f"{action}: {download_result.file_path}")
+                                if (
+                                    run_vision_agent
+                                    and self._vision_agent_runner is not None
+                                    and (
+                                        download_result.downloaded
+                                        or (
+                                            download_result.file_path is not None
+                                            and download_result.file_path.exists()
+                                        )
+                                    )
+                                ):
+                                    run_result = self._vision_agent_runner.run(metadata.video_id)
+                                    if run_result.return_code == 0:
+                                        print(f"Vision agent tamamlandi: {metadata.video_id}")
+                                    else:
+                                        if self._catcher_exporter is not None:
+                                            self._catcher_exporter.write_agent_error(
+                                                metadata.video_id,
+                                                stage="vision",
+                                                message=f"vision-agent exited with code {run_result.return_code}",
+                                            )
+                                            self._catcher_exporter.write_agent_error(
+                                                metadata.video_id,
+                                                stage="transcript",
+                                                message=f"vision-agent exited with code {run_result.return_code}",
+                                            )
+                                        print(
+                                            f"Vision agent failed for {metadata.video_id} "
+                                            f"with exit code {run_result.return_code}"
+                                        )
                             except Exception as error:
                                 print(f"Video download failed for {link}: {error}")
                     except Exception as error:
@@ -156,5 +199,7 @@ def build_default_orchestrator(project_root: str | Path | None = None) -> Instag
         extractor=InstagramMetadataExtractor(debug_dir=scraper_root / "debug"),
         storage=storage,
         downloader=InstagramVideoDownloader(scraper_root / "downloads"),
+        catcher_exporter=CatcherDataExporter(scraper_root.parent / "catcher-data"),
+        vision_agent_runner=VisionAgentRunner(scraper_root.parent),
         storage_state_path=storage_state_path,
     )

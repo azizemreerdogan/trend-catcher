@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pause-before-extract", action="store_true", help="Pause after link discovery before metadata extraction")
     parser.add_argument("--step-mode", action="store_true", help="Wait for Enter before opening each collected reel")
     parser.add_argument("--download-videos", action="store_true", help="Download discovered videos into instagram-scraper/downloads")
+    parser.add_argument("--run-vision-agent", action="store_true", help="Run vision-agent after a video is downloaded into catcher-data")
     return parser.parse_args()
 
 
@@ -35,6 +36,7 @@ if __name__ == "__main__":
             pause_before_extract=args.pause_before_extract,
             step_mode=args.step_mode,
             download_videos=args.download_videos,
+            run_vision_agent=args.run_vision_agent,
         )
     except Exception as error:
         print(f"Scraper failed: {error}")

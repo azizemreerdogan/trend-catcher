@@ -87,14 +87,44 @@ class FakeStorage:
 class FakeDownloader:
     def __init__(self):
         self.downloaded_ids = []
+        self.target_paths = []
 
-    def download(self, metadata):
+    def download(self, metadata, target_path=None):
         self.downloaded_ids.append(metadata.video_id)
+        self.target_paths.append(Path(target_path) if target_path else None)
 
         class Result:
             downloaded = True
             skipped = False
-            file_path = Path(f"/tmp/{metadata.video_id}.mp4")
+            file_path = Path(target_path) if target_path else Path(f"/tmp/{metadata.video_id}.mp4")
+
+        return Result()
+
+
+class FakeCatcherExporter:
+    def __init__(self):
+        self.prepared_ids = []
+
+    def prepare_bundle(self, metadata):
+        self.prepared_ids.append(metadata.video_id)
+
+        class Bundle:
+            video_dir = Path(f"/tmp/{metadata.video_id}")
+            video_file_path = Path(f"/tmp/{metadata.video_id}/video.mp4")
+
+        return Bundle()
+
+
+class FakeVisionAgentRunner:
+    def __init__(self):
+        self.triggered_ids = []
+
+    def run(self, video_id):
+        self.triggered_ids.append(video_id)
+
+        class Result:
+            triggered = True
+            return_code = 0
 
         return Result()
 
@@ -122,20 +152,27 @@ def test_orchestrator_runs_end_to_end_with_injected_dependencies():
 def test_orchestrator_can_download_videos():
     storage = FakeStorage()
     downloader = FakeDownloader()
+    exporter = FakeCatcherExporter()
+    runner = FakeVisionAgentRunner()
     orchestrator = InstagramScrapeOrchestrator(
         navigator=FakeNavigator(),
         extractor=FakeExtractor(),
         storage=storage,
         downloader=downloader,
+        catcher_exporter=exporter,
+        vision_agent_runner=runner,
         browser_session_factory=FakeBrowserSession,
         storage_state_path="auth/state.json",
     )
 
-    result = orchestrator.run(max_links=1, headless=True, download_videos=True)
+    result = orchestrator.run(max_links=1, headless=True, download_videos=True, run_vision_agent=True)
 
     assert result.downloaded_items == 1
     assert result.skipped_downloads == 0
     assert downloader.downloaded_ids == ["ABC123"]
+    assert exporter.prepared_ids == ["ABC123"]
+    assert downloader.target_paths == [Path("/tmp/ABC123/video.mp4")]
+    assert runner.triggered_ids == ["ABC123"]
 
 
 def test_orchestrator_requires_storage_state_path():
